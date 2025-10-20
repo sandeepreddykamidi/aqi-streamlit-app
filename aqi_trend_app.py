@@ -1,6 +1,7 @@
 # Import Python packages
 import streamlit as st
 import pandas as pd
+import snowflake.connector
 from snowflake.snowpark import Session
 
 # -------------------------------
@@ -9,31 +10,40 @@ st.title("Air Quality Trend - At Station Level")
 st.write("This Streamlit app is hosted on Streamlit Community Cloud and connects securely to Snowflake.")
 
 # -------------------------------
-# Create Snowflake session using Streamlit secrets
+# Snowflake Connector for dropdowns
 @st.cache_resource
-def create_session():
-    connection_parameters = st.secrets["connections"]["snowflake"]
-    session = Session.builder.configs(connection_parameters).create()
+def create_snowflake_conn():
+    conn = snowflake.connector.connect(
+        user=st.secrets["connections"]["snowflake"]["user"],
+        password=st.secrets["connections"]["snowflake"]["password"],
+        account=st.secrets["connections"]["snowflake"]["account"],
+        warehouse=st.secrets["connections"]["snowflake"]["warehouse"],
+        database=st.secrets["connections"]["snowflake"]["database"],
+        schema=st.secrets["connections"]["snowflake"]["schema"]
+    )
+    return conn
+
+conn = create_snowflake_conn()
+
+# Snowpark session for trend queries
+@st.cache_resource
+def create_snowpark_session():
+    session = Session.builder.configs(st.secrets["connections"]["snowflake"]).create()
     return session
 
-session = create_session()
-
-# Initialize selection parameters
-state_option, city_option, station_option, date_option = '', '', '', ''
+session = create_snowpark_session()
 
 # -------------------------------
-# Query to get distinct states
-state_query = """
-    SELECT DISTINCT state 
-    FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
-    ORDER BY state
-"""
-state_rows = session.sql(state_query).collect()
-state_list = [row[0] for row in state_rows]
+# State selection
+state_query = "SELECT DISTINCT state FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM ORDER BY state"
+cur = conn.cursor()
+cur.execute(state_query)
+state_list = [row[0] for row in cur.fetchall()]
 state_option = st.selectbox('Select State', state_list)
 
 # -------------------------------
-# City selection based on state
+# City selection
+city_option = ''
 if state_option:
     city_query = f"""
         SELECT DISTINCT city 
@@ -41,12 +51,13 @@ if state_option:
         WHERE state = '{state_option}' 
         ORDER BY city
     """
-    city_rows = session.sql(city_query).collect()
-    city_list = [row[0] for row in city_rows]
+    cur.execute(city_query)
+    city_list = [row[0] for row in cur.fetchall()]
     city_option = st.selectbox('Select City', city_list)
 
 # -------------------------------
-# Station selection based on state & city
+# Station selection
+station_option = ''
 if city_option:
     station_query = f"""
         SELECT DISTINCT station 
@@ -54,29 +65,28 @@ if city_option:
         WHERE state = '{state_option}' AND city = '{city_option}'
         ORDER BY station
     """
-    station_rows = session.sql(station_query).collect()
-    station_list = [row[0] for row in station_rows]
+    cur.execute(station_query)
+    station_list = [row[0] for row in cur.fetchall()]
     station_option = st.selectbox('Select Station', station_list)
 
 # -------------------------------
-# Date selection based on state, city & station
+# Date selection
+date_option = ''
 if station_option:
     date_query = f"""
         SELECT DISTINCT TO_DATE(measurement_time) AS measurement_date
         FROM DEV_DB.CONSUMPTION_SCH.AIR_QUALITY_FACT f
-        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l 
+        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l
             ON f.location_fk = l.location_pk
-        WHERE state = '{state_option}' 
-          AND city = '{city_option}' 
-          AND station = '{station_option}'
+        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}'
         ORDER BY measurement_date DESC
     """
-    date_rows = session.sql(date_query).collect()
-    date_list = [str(row[0]) for row in date_rows]
+    cur.execute(date_query)
+    date_list = [str(row[0]) for row in cur.fetchall()]
     date_option = st.selectbox('Select Date', date_list)
 
 # -------------------------------
-# Display trend data and charts
+# Display trend data and charts using Snowpark
 if date_option:
     trend_sql = f"""
         SELECT 
@@ -90,21 +100,19 @@ if date_option:
             O3_AVG,
             AQI
         FROM DEV_DB.CONSUMPTION_SCH.AIR_QUALITY_FACT f
-        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l 
+        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l
             ON f.location_fk = l.location_pk
-        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}' 
+        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}'
           AND TO_DATE(measurement_time) = '{date_option}'
         ORDER BY measurement_time
     """
     trend_rows = session.sql(trend_sql).collect()
-    
-    # Convert to pandas DataFrame
-    trend_df = pd.DataFrame(trend_rows, columns=['Hour', 'PM2.5','PM10','SO2','NO2','NH3','CO','O3','AQI'])
+    trend_df = pd.DataFrame(trend_rows, columns=['Hour','PM2.5','PM10','SO2','NO2','NH3','CO','O3','AQI'])
 
     # -------------------------------
     # Charts
     st.subheader(f"Hourly AQI Level")
-    st.line_chart(trend_df[['Hour', 'AQI']].set_index('Hour'))
+    st.line_chart(trend_df[['Hour','AQI']].set_index('Hour'))
 
     st.subheader(f"Stacked Chart: Hourly Pollutant Levels")
     st.bar_chart(trend_df.set_index('Hour')[['PM2.5','PM10','SO2','NO2','NH3','CO','O3']])
