@@ -1,3 +1,0 @@
-streamlit==1.38.0
-snowflake-snowpark-python==1.40.0
-pandas
