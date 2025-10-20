@@ -7,7 +7,7 @@ from snowflake.snowpark import Session
 # Debug: check if secrets are loaded
 # Remove this after verifying
 st.write("Secrets loaded:")
-st.write(st.secrets["connections.snowflake"])
+st.write(st.secrets["connections"]["snowflake"])
 # -------------------------------
 
 # Page Title
@@ -17,7 +17,7 @@ st.write("This Streamlit app is hosted on Streamlit Community Cloud and connects
 # Create Snowflake session using Streamlit secrets
 @st.cache_resource
 def create_session():
-    connection_parameters = st.secrets["connections.snowflake"]
+    connection_parameters = st.secrets["connections"]["snowflake"]
     session = Session.builder.configs(connection_parameters).create()
     return session
 
