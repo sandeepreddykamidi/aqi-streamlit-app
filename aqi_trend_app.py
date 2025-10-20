@@ -3,6 +3,13 @@ import streamlit as st
 import pandas as pd
 from snowflake.snowpark import Session
 
+# -------------------------------
+# Debug: check if secrets are loaded
+# Remove this after verifying
+st.write("Secrets loaded:")
+st.write(st.secrets["connections.snowflake"])
+# -------------------------------
+
 # Page Title
 st.title("AQI Trend - By State / City / Day Level")
 st.write("This Streamlit app is hosted on Streamlit Community Cloud and connects securely to Snowflake.")
@@ -11,13 +18,15 @@ st.write("This Streamlit app is hosted on Streamlit Community Cloud and connects
 @st.cache_resource
 def create_session():
     connection_parameters = st.secrets["connections.snowflake"]
-    return Session.builder.configs(connection_parameters).create()
+    session = Session.builder.configs(connection_parameters).create()
+    return session
 
 session = create_session()
 
 # Initialize selection parameters
 state_option, city_option, date_option = '', '', ''
 
+# -------------------------------
 # Query to get distinct states
 state_query = """
     SELECT state 
