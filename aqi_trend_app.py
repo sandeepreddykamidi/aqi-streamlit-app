@@ -6,8 +6,8 @@ from snowflake.snowpark import Session
 # -------------------------------
 # Debug: check if secrets are loaded
 # Remove this after verifying
-st.write("Secrets loaded:")
-st.write(st.secrets["connections"]["snowflake"])
+# st.write("Secrets loaded:")
+# st.write(st.secrets["connections"]["snowflake"])
 # -------------------------------
 
 # Page Title
