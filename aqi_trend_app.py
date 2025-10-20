@@ -24,57 +24,55 @@ state_option, city_option, station_option, date_option = '', '', '', ''
 # -------------------------------
 # Query to get distinct states
 state_query = """
-    SELECT state 
+    SELECT DISTINCT state 
     FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
-    GROUP BY state 
-    ORDER BY 1
+    ORDER BY state
 """
-state_df = session.sql(state_query).to_pandas()
-state_list = state_df["STATE"].tolist()
+state_rows = session.sql(state_query).collect()
+state_list = [row[0] for row in state_rows]
 state_option = st.selectbox('Select State', state_list)
 
 # -------------------------------
 # City selection based on state
 if state_option:
     city_query = f"""
-        SELECT city 
+        SELECT DISTINCT city 
         FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
         WHERE state = '{state_option}' 
-        GROUP BY city 
-        ORDER BY 1
+        ORDER BY city
     """
-    city_df = session.sql(city_query).to_pandas()
-    city_list = city_df["CITY"].tolist()
+    city_rows = session.sql(city_query).collect()
+    city_list = [row[0] for row in city_rows]
     city_option = st.selectbox('Select City', city_list)
 
 # -------------------------------
 # Station selection based on state & city
 if city_option:
     station_query = f"""
-        SELECT station 
+        SELECT DISTINCT station 
         FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
         WHERE state = '{state_option}' AND city = '{city_option}'
-        GROUP BY station 
-        ORDER BY 1
+        ORDER BY station
     """
-    station_df = session.sql(station_query).to_pandas()
-    station_list = station_df["STATION"].tolist()
+    station_rows = session.sql(station_query).collect()
+    station_list = [row[0] for row in station_rows]
     station_option = st.selectbox('Select Station', station_list)
 
 # -------------------------------
 # Date selection based on state, city & station
 if station_option:
     date_query = f"""
-        SELECT DATE(measurement_time) AS measurement_date
+        SELECT DISTINCT TO_DATE(measurement_time) AS measurement_date
         FROM DEV_DB.CONSUMPTION_SCH.AIR_QUALITY_FACT f
         JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l 
             ON f.location_fk = l.location_pk
-        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}'
-        GROUP BY DATE(measurement_time)
-        ORDER BY 1 DESC
+        WHERE state = '{state_option}' 
+          AND city = '{city_option}' 
+          AND station = '{station_option}'
+        ORDER BY measurement_date DESC
     """
-    date_df = session.sql(date_query).to_pandas()
-    date_list = date_df["MEASUREMENT_DATE"].astype(str).tolist()
+    date_rows = session.sql(date_query).collect()
+    date_list = [str(row[0]) for row in date_rows]
     date_option = st.selectbox('Select Date', date_list)
 
 # -------------------------------
@@ -95,13 +93,13 @@ if date_option:
         JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l 
             ON f.location_fk = l.location_pk
         WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}' 
-          AND DATE(measurement_time) = '{date_option}'
+          AND TO_DATE(measurement_time) = '{date_option}'
         ORDER BY measurement_time
     """
-    trend_df = session.sql(trend_sql).to_pandas()
-
-    # Rename columns for clarity
-    trend_df.columns = ['Hour', 'PM2.5', 'PM10', 'SO2', 'NO2', 'NH3', 'CO', 'O3', 'AQI']
+    trend_rows = session.sql(trend_sql).collect()
+    
+    # Convert to pandas DataFrame
+    trend_df = pd.DataFrame(trend_rows, columns=['Hour', 'PM2.5','PM10','SO2','NO2','NH3','CO','O3','AQI'])
 
     # -------------------------------
     # Charts
