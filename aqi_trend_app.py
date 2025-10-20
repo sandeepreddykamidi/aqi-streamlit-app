@@ -1,121 +1,115 @@
-# Import Python packages
+# Import python packages
 import streamlit as st
 import pandas as pd
-import snowflake.connector
-from snowflake.snowpark import Session
+from decimal import Decimal
+from snowflake.snowpark.context import get_active_session
+st.write("Secrets loaded:")
+st.write(st.secrets["connections"]["snowflake"])
 
-# -------------------------------
 # Page Title
-st.title("Air Quality Trend - At Station Level")
+st.title("AQI Trend - By State / City / Day Level")
 st.write("This Streamlit app is hosted on Streamlit Community Cloud and connects securely to Snowflake.")
 
-# -------------------------------
-# Snowflake Connector for dropdowns
 @st.cache_resource
-def create_snowflake_conn():
-    conn = snowflake.connector.connect(
-        user=st.secrets["connections"]["snowflake"]["user"],
-        password=st.secrets["connections"]["snowflake"]["password"],
-        account=st.secrets["connections"]["snowflake"]["account"],
-        warehouse=st.secrets["connections"]["snowflake"]["warehouse"],
-        database=st.secrets["connections"]["snowflake"]["database"],
-        schema=st.secrets["connections"]["snowflake"]["schema"]
-    )
-    return conn
-
-conn = create_snowflake_conn()
-
-# Snowpark session for trend queries
-@st.cache_resource
-def create_snowpark_session():
-    session = Session.builder.configs(st.secrets["connections"]["snowflake"]).create()
+def create_session():
+    connection_parameters = st.secrets["connections"]["snowflake"]
+    session = Session.builder.configs(connection_parameters).create()
     return session
 
-session = create_snowpark_session()
+# Get Session
+session = get_active_session()
 
-# -------------------------------
-# State selection
-state_query = "SELECT DISTINCT state FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM ORDER BY state"
-cur = conn.cursor()
-cur.execute(state_query)
-state_list = [row[0] for row in cur.fetchall()]
-state_option = st.selectbox('Select State', state_list)
+state_option,city_option, station_option, date_option  = '','','',''
+state_query = """
+    select state from DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
+    group by state 
+    order by 1
+"""
+state_list = session.sql(state_query)
+state_option = st.selectbox('Select State',state_list)
 
-# -------------------------------
-# City selection
-city_option = ''
-if state_option:
+#check the selection
+if (state_option is not None and len(state_option) > 1):
     city_query = f"""
-        SELECT DISTINCT city 
-        FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
-        WHERE state = '{state_option}' 
-        ORDER BY city
+    select city from dev_db.consumption_sch.location_dim 
+    where 
+    state = '{state_option}' group by city
+    order by 1 desc
     """
-    cur.execute(city_query)
-    city_list = [row[0] for row in cur.fetchall()]
-    city_option = st.selectbox('Select City', city_list)
+    city_list = session.sql(city_query)
+    city_option = st.selectbox('Select City',city_list)
 
-# -------------------------------
-# Station selection
-station_option = ''
-if city_option:
+if (city_option is not None and len(city_option) > 1):
     station_query = f"""
-        SELECT DISTINCT station 
-        FROM DEV_DB.CONSUMPTION_SCH.LOCATION_DIM 
-        WHERE state = '{state_option}' AND city = '{city_option}'
-        ORDER BY station
+    select station from dev_db.consumption_sch.location_dim 
+        where 
+            state = '{state_option}' and
+            city = '{city_option}'
+        group by station
+        order by 1 desc
     """
-    cur.execute(station_query)
-    station_list = [row[0] for row in cur.fetchall()]
-    station_option = st.selectbox('Select Station', station_list)
+    station_list = session.sql(station_query)
+    station_option = st.selectbox('Select Station',station_list)
 
-# -------------------------------
-# Date selection
-date_option = ''
-if station_option:
+if (station_option is not None and len(station_option) > 1):
     date_query = f"""
-        SELECT DISTINCT TO_DATE(measurement_time) AS measurement_date
-        FROM DEV_DB.CONSUMPTION_SCH.AIR_QUALITY_FACT f
-        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l
-            ON f.location_fk = l.location_pk
-        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}'
-        ORDER BY measurement_date DESC
+    select date(measurement_time) as measurement_date from dev_db.consumption_sch.date_dim
+        group by 1 
+        order by 1 desc
     """
-    cur.execute(date_query)
-    date_list = [str(row[0]) for row in cur.fetchall()]
-    date_option = st.selectbox('Select Date', date_list)
+    date_list = session.sql(date_query)
+    date_option = st.selectbox('Select Date',date_list)
 
-# -------------------------------
-# Display trend data and charts using Snowpark
-if date_option:
+
+if (date_option is not None):
     trend_sql = f"""
-        SELECT 
-            HOUR(measurement_time) AS Hour,
-            PM25_AVG,
-            PM10_AVG,
-            SO2_AVG,
-            NO2_AVG,
-            NH3_AVG,
-            CO_AVG,
-            O3_AVG,
-            AQI
-        FROM DEV_DB.CONSUMPTION_SCH.AIR_QUALITY_FACT f
-        JOIN DEV_DB.CONSUMPTION_SCH.LOCATION_DIM l
-            ON f.location_fk = l.location_pk
-        WHERE state = '{state_option}' AND city = '{city_option}' AND station = '{station_option}'
-          AND TO_DATE(measurement_time) = '{date_option}'
-        ORDER BY measurement_time
+    select 
+        hour(measurement_time) as Hour,
+        l.state,
+        l.city,
+        l.station,
+        l.latitude::number(10,7) as latitude,
+        l.longitude::number(10,7) as longitude,
+        pm25_avg,
+        pm10_avg,
+        so2_avg,
+        no2_avg,
+        nh3_avg,
+        co_avg,
+        o3_avg,
+        prominent_pollutant,
+        AQI
+    from 
+        dev_db.consumption_sch.air_quality_fact f 
+        join 
+        dev_db.consumption_sch.date_dim d on d.date_pk  = f.date_fk and date(measurement_time) = '{date_option}'
+        join 
+        dev_db.consumption_sch.location_dim l on l.location_pk  = f.location_fk and 
+        l.state = '{state_option}' and
+        l.city = '{city_option}' and 
+        l.station = '{station_option}'
+    order by measurement_time
     """
-    trend_rows = session.sql(trend_sql).collect()
-    trend_df = pd.DataFrame(trend_rows, columns=['Hour','PM2.5','PM10','SO2','NO2','NH3','CO','O3','AQI'])
+    sf_df = session.sql(trend_sql).collect()
 
-    # -------------------------------
-    # Charts
+    df = pd.DataFrame(sf_df,columns=['Hour','state','city','station','lat', 'lon','PM2.5','PM10','SO3','CO','NO2','NH3','O3','PROMINENT_POLLUTANT','AQI'])
+    
+    df_aqi = df.drop(['state','city','station','lat', 'lon','PM2.5','PM10','SO3','CO','NO2','NH3','O3','PROMINENT_POLLUTANT'], axis=1)
+    df_table = df.drop(['state','city','station','lat', 'lon','PROMINENT_POLLUTANT','AQI'], axis=1)
+    df_map = df.drop(['Hour','state','city','station','PM2.5','PM10','SO3','CO','NO2','NH3','O3','PROMINENT_POLLUTANT','AQI'], axis=1)
+
     st.subheader(f"Hourly AQI Level")
-    st.line_chart(trend_df[['Hour','AQI']].set_index('Hour'))
-
-    st.subheader(f"Stacked Chart: Hourly Pollutant Levels")
-    st.bar_chart(trend_df.set_index('Hour')[['PM2.5','PM10','SO2','NO2','NH3','CO','O3']])
-
+    #st.caption(f'### :blue[Temporal Distribution] of Pollutants on :blue[{date_option}]')
+    st.line_chart(df_aqi,x="Hour", color = '#FFA500')
+    st.subheader(f"Stacked Chart:  Hourly Individual Pollutant Level")
+    #st.caption(f'### :blue[Temporal Distribution] of Pollutants on :blue[{date_option}]')
+    st.bar_chart(df_table,x="Hour")
     st.subheader(f"Line Chart: Hourly Pollutant Levels")
-    st.line_chart(trend_df.set_index('Hour')[['PM2.5','PM10','SO2','NO2','NH3','CO','O3']])
+    #st.caption(f'### Hourly Trends in Pollutant Levels - :blue[{date_option}]')
+    st.line_chart(df_table,x="Hour")
+    
+    columns_to_convert = ['lat', 'lon']
+    df_map[columns_to_convert] = df_map[columns_to_convert].astype(float)
+    st.subheader(f"{station_option}")
+    #st.map(df,size='AQI') # the size argument does not work in snowflake instance
+    st.map(df_map)
